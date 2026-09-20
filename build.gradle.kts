@@ -121,7 +121,17 @@ tasks {
         jvmArgs("-Dcom.mojang.eula.agree=true")
     }
 
-    runPaper.folia.registerTask()
+    runPaper.folia.registerTask {
+        minecraftVersion(
+            providers.gradleProperty("runFoliaMcVersion").orNull ?: libs.versions.paper.get().substringBefore(".build.")
+        )
+
+        downloadPlugins {
+            modrinth("luckperms", "v5.5.71-bukkit")
+        }
+
+        jvmArgs("-Dcom.mojang.eula.agree=true")
+    }
 }
 
 java {
