@@ -7,6 +7,7 @@ import com.github.retrooper.packetevents.util.Vector3f;
 import com.mattmx.nametags.NameTags;
 import com.mattmx.nametags.event.NameTagEntityCreateEvent;
 import com.mattmx.nametags.event.NameTagEntityPreSpawnEvent;
+import com.mattmx.nametags.utils.Scheduler;
 import me.tofaa.entitylib.meta.display.AbstractDisplayMeta;
 import me.tofaa.entitylib.meta.display.TextDisplayMeta;
 import org.bukkit.Bukkit;
@@ -62,12 +63,15 @@ public class NameTagEntityManager {
 
     public @Nullable NameTagEntity removeEntity(@NotNull Entity entity) {
         lastSentPassengers.remove(entity.getEntityId());
+
+        final NameTagEntity cached = nameTagCache.getIfPresent(entity.getUniqueId());
         nameTagCache.invalidate(entity.getUniqueId());
 
         final NameTagEntity removed = nameTagEntityByEntityId.remove(entity.getEntityId());
         if (removed != null) {
             nameTagEntityByPassengerEntityId.remove(removed.getPassenger().getEntityId());
-        } else {
+        } else if (cached != null) {
+            // The cache knew about this entity but the ID maps did not, so something is leaking.
             throw new IllegalArgumentException("No cached NameTag by the passenger entity ID, this could be a memory leak.");
         }
 
@@ -143,14 +147,36 @@ public class NameTagEntityManager {
                 this.nameTagCache.put(uuid, tagEntity);
             }
         } else {
-            Bukkit.getScheduler().runTask(NameTags.getInstance(), () -> {
-                if (Bukkit.getEntity(uuid) == null) {
-                    tagEntity.destroy();
-                    removeEntity(entity);
-                } else {
-                    this.nameTagCache.put(uuid, tagEntity);
-                }
-            });
+            final NameTags plugin = NameTags.getInstance();
+
+            // Nothing may be scheduled once we are shutting down, and there is no one left to
+            // send packets to anyway.
+            if (!plugin.isEnabled()) {
+                tagEntity.destroy();
+                return;
+            }
+
+            // Whether the entity still exists may only be asked on the region which owns it, so
+            // this hops there instead of reaching for Bukkit#getEntity from the cache's thread.
+            // Folia additionally retires the scheduler once the entity is gone for good, which is
+            // the same outcome as isValid() returning false.
+            final Runnable discard = () -> {
+                tagEntity.destroy();
+                removeEntity(entity);
+            };
+
+            Scheduler.entity(
+                plugin,
+                entity,
+                () -> {
+                    if (entity.isValid()) {
+                        this.nameTagCache.put(uuid, tagEntity);
+                    } else {
+                        discard.run();
+                    }
+                },
+                discard
+            );
         }
     }
 }
