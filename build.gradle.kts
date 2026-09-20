@@ -1,3 +1,4 @@
+import org.gradle.api.attributes.java.TargetJvmVersion
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -20,9 +21,9 @@ repositories {
     }
     maven("https://repo.papermc.io/repository/maven-public/")
     maven("https://repo.dmulloy2.net/repository/public/")
-    maven("https://repo.extendedclip.com/content/repositories/placeholderapi/")
+    maven("https://repo.extendedclip.com/releases/")
     maven("https://repo.codemc.io/repository/maven-releases/")
-    maven("https://maven.evokegames.gg/snapshots")
+    maven("https://maven.pvphub.me/tofaa")
 
     mavenLocal()
     mavenCentral()
@@ -100,16 +101,21 @@ tasks {
     }
 
     runServer {
-        val mcVersion = libs.versions.paper.get().split("-")[0]
-        minecraftVersion(mcVersion)
+        // Override with -PrunMcVersion=26.2 to test against a different release.
+        minecraftVersion(
+            providers.gradleProperty("runMcVersion").orNull
+                ?: libs.versions.paper.get().substringBefore(".build.")
+        )
 
         downloadPlugins {
-            hangar("ViaVersion", "5.3.2")
-            hangar("ViaBackwards", "5.3.2")
-            modrinth("packetevents","2HJtPM2W")
+            hangar("ViaVersion", "5.12.0")
+            hangar("ViaBackwards", "5.12.0")
+            // No PacketEvents RELEASE supports 26.3 yet, and injecting 2.13.0 here crashes the
+            // server on startup. Put a 26.3-capable build in run/plugins/ instead.
+            // modrinth("packetevents", "h0ncTpUP")
 
             // For testing groups in config.yml
-            modrinth("luckperms", "v5.4.145-bukkit")
+            modrinth("luckperms", "v5.5.71-bukkit")
         }
 
         jvmArgs("-Dcom.mojang.eula.agree=true")
@@ -123,7 +129,19 @@ java {
     withSourcesJar()
 
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 21
+}
+
+listOf(configurations.compileClasspath, configurations.testCompileClasspath).forEach { config ->
+    config.configure {
+        attributes {
+            attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+        }
     }
 }
 

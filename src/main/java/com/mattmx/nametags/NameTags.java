@@ -50,6 +50,12 @@ public class NameTags extends JavaPlugin {
     public void onEnable() {
         instance = this;
 
+        if (!DependencyVersionChecker.isPacketEventsUsable()) {
+            DependencyVersionChecker.warnUnusablePacketEvents();
+            Bukkit.getPluginManager().disablePlugin(this);
+            return;
+        }
+
         entityManager = new NameTagEntityManager();
         eventsListener = new EventsListener(this);
         packetListener = new OutgoingPacketListener(this);
@@ -81,7 +87,6 @@ public class NameTags extends JavaPlugin {
         SkinRestorerHook.inject(this);
 
         Bukkit.getPluginManager().registerEvents(eventsListener, this);
-        Bukkit.getScheduler().runTaskLater(this, DependencyVersionChecker::checkPacketEventsVersion, 10L);
 
         Objects.requireNonNull(Bukkit.getPluginCommand("nametags")).setExecutor(new NameTagsCommand(this));
 
@@ -139,13 +144,19 @@ public class NameTags extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        metrics.shutdown();
+        if (metrics != null) {
+            metrics.shutdown();
+        }
 
-        HandlerList.unregisterAll(this.eventsListener);
+        if (eventsListener != null) {
+            HandlerList.unregisterAll(this.eventsListener);
+        }
 
-        PacketEvents.getAPI()
-            .getEventManager()
-            .unregisterListener(this.packetListener);
+        if (packetListener != null) {
+            PacketEvents.getAPI()
+                .getEventManager()
+                .unregisterListener(this.packetListener);
+        }
     }
 
     public Executor getExecutor() {
