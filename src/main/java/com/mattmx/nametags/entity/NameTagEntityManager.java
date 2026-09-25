@@ -40,6 +40,13 @@ public class NameTagEntityManager {
     };
 
     public @NotNull NameTagEntity getOrCreateNameTagEntity(@NotNull Entity entity) {
+        final NameTagEntity existing = nameTagCache.getIfPresent(entity.getUniqueId());
+        if (existing != null && existing.getBukkitEntity().getEntityId() != entity.getEntityId()) {
+            if (nameTagCache.asMap().remove(entity.getUniqueId(), existing)) {
+                discard(existing);
+            }
+        }
+
         NameTagEntity tagEntity = nameTagCache.get(entity.getUniqueId(), uuid -> {
             NameTagEntity newlyCreated = new NameTagEntity(entity);
 
@@ -53,8 +60,13 @@ public class NameTagEntityManager {
 
             Bukkit.getPluginManager().callEvent(new NameTagEntityCreateEvent(newlyCreated));
 
-            nameTagEntityByEntityId.put(entity.getEntityId(), newlyCreated);
+            final NameTagEntity previous = nameTagEntityByEntityId.put(entity.getEntityId(), newlyCreated);
             nameTagEntityByPassengerEntityId.put(newlyCreated.getPassenger().getEntityId(), newlyCreated);
+
+            if (previous != null && previous != newlyCreated) {
+                nameTagEntityByPassengerEntityId.remove(previous.getPassenger().getEntityId(), previous);
+                previous.destroy();
+            }
 
             return newlyCreated;
         });
@@ -64,15 +76,19 @@ public class NameTagEntityManager {
     public @Nullable NameTagEntity removeEntity(@NotNull Entity entity) {
         lastSentPassengers.remove(entity.getEntityId());
 
-        final NameTagEntity cached = nameTagCache.getIfPresent(entity.getUniqueId());
-        nameTagCache.invalidate(entity.getUniqueId());
-
+        // Unlink from the ID map before the cache, so an expired entry can't be restored afterwards (see restore()).
         final NameTagEntity removed = nameTagEntityByEntityId.remove(entity.getEntityId());
         if (removed != null) {
-            nameTagEntityByPassengerEntityId.remove(removed.getPassenger().getEntityId());
-        } else if (cached != null) {
-            // The cache knew about this entity but the ID maps did not, so something is leaking.
-            throw new IllegalArgumentException("No cached NameTag by the passenger entity ID, this could be a memory leak.");
+            nameTagEntityByPassengerEntityId.remove(removed.getPassenger().getEntityId(), removed);
+        }
+
+        final NameTagEntity cached = nameTagCache.asMap().remove(entity.getUniqueId());
+        if (cached != null && cached != removed) {
+            if (removed == null) {
+                unlink(cached);
+                return cached;
+            }
+            discard(cached);
         }
 
         return removed;
@@ -139,12 +155,12 @@ public class NameTagEntityManager {
 
         Entity entity = tagEntity.getBukkitEntity();
 
+        // isConnected() is tied to this Player instance, isOnline() stays true after the player rejoins.
         if (entity instanceof Player player) {
-            if (!player.isOnline()) {
-                tagEntity.destroy();
-                removeEntity(entity);
+            if (player.isConnected()) {
+                restore(uuid, tagEntity);
             } else {
-                this.nameTagCache.put(uuid, tagEntity);
+                discard(tagEntity);
             }
         } else {
             final NameTags plugin = NameTags.getInstance();
@@ -154,24 +170,43 @@ public class NameTagEntityManager {
                 return;
             }
 
-            final Runnable discard = () -> {
-                tagEntity.destroy();
-                removeEntity(entity);
-            };
-
             FoliaScheduler.getEntityScheduler().execute(
                 entity,
                 plugin,
                 () -> {
                     if (entity.isValid()) {
-                        this.nameTagCache.put(uuid, tagEntity);
+                        restore(uuid, tagEntity);
                     } else {
-                        discard.run();
+                        discard(tagEntity);
                     }
                 },
-                discard,
+                () -> discard(tagEntity),
                 1L
             );
         }
+    }
+
+    private void restore(UUID uuid, NameTagEntity tagEntity) {
+        // Only put it back while it is still tracked, otherwise removeEntity() ran since it expired and we'd resurrect it.
+        // Holding the ID map's lock for this entry makes this atomic with removeEntity(), which unlinks it first.
+        nameTagEntityByEntityId.computeIfPresent(tagEntity.getBukkitEntity().getEntityId(), (id, current) -> {
+            if (current == tagEntity) {
+                this.nameTagCache.asMap().putIfAbsent(uuid, tagEntity);
+            }
+            return current;
+        });
+    }
+
+    // Removes by the tag's own IDs, never by UUID, which may now belong to a newer entity's tag.
+    private void unlink(NameTagEntity tagEntity) {
+        final int entityId = tagEntity.getBukkitEntity().getEntityId();
+        nameTagEntityByEntityId.remove(entityId, tagEntity);
+        nameTagEntityByPassengerEntityId.remove(tagEntity.getPassenger().getEntityId(), tagEntity);
+        lastSentPassengers.remove(entityId);
+    }
+
+    private void discard(NameTagEntity tagEntity) {
+        unlink(tagEntity);
+        tagEntity.destroy();
     }
 }
