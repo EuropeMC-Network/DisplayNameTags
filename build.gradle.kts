@@ -39,9 +39,6 @@ dependencies {
     compileOnly(libs.packetevents)
     compileOnly(libs.skinsrestorer)
 
-    // Downloaded during runtime
-    compileOnly(libs.caffeine)
-
     // Shaded
     implementation(libs.entitylib)
     implementation(libs.bstats)

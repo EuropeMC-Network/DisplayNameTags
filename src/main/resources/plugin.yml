@@ -13,9 +13,6 @@ softdepend:
   - TAB
   - SkinsRestorer
 
-libraries:
-  - com.github.ben-manes.caffeine:caffeine:3.2.4
-
 commands:
   nametags:
     description: Reload and debug commands

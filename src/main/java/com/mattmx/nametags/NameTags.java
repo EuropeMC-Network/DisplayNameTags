@@ -30,6 +30,7 @@ import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class NameTags extends JavaPlugin {
     public static final int TRANSPARENT = Color.fromARGB(0).asARGB();
@@ -59,6 +60,7 @@ public class NameTags extends JavaPlugin {
         }
 
         entityManager = new NameTagEntityManager();
+        FoliaScheduler.getAsyncScheduler().runAtFixedRate(this, (task) -> entityManager.sweepStaleEntities(), 1L, 1L, TimeUnit.MINUTES);
         eventsListener = new EventsListener(this);
         packetListener = new OutgoingPacketListener(this);
 
